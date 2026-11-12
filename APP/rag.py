@@ -9,6 +9,8 @@ from typing import Any
 import httpx
 from pypdf import PdfReader
 
+from APP.youtube import summarize_short
+
 DEFAULT_PDF_PATH = Path(__file__).resolve().parent.parent / "DOCUMENTS" / "AI_RAG_Sample_Document.pdf"
 
 STOPWORDS = {
@@ -17,6 +19,17 @@ STOPWORDS = {
     "will", "with", "what", "when", "where", "which", "who", "why", "how",
     "this", "these", "those", "can", "could", "should", "would", "do", "does",
     "did", "about", "into", "or", "if", "your", "you", "me", "my", "we", "our",
+}
+
+OPENAI_COMPAT_PROVIDERS = {
+    "openai": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "model": "gpt-4o-mini",
+    },
+    "groq": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "model": "llama-3.1-8b-instant",
+    },
 }
 
 
@@ -129,16 +142,16 @@ def retrieve_chunks(query: str, chunks: list[str], top_k: int = 3) -> list[dict[
 
 
 def _build_extractive_answer(query: str, matches: list[dict[str, Any]]) -> str:
-    """Create a grounded answer directly from top PDF chunks when no LLM key is used."""
+    """Create a grounded answer directly from top chunks when no LLM key is used."""
     if not matches:
-        return "Document mein is sawal se milta-julta koi content nahi mila."
+        return "Loaded content mein is sawal se milta-julta koi hissa nahi mila."
 
     if matches[0]["score"] <= 0.0:
         preview = matches[0]["text"]
         return (
-            "Is query ka exact keyword match nahi mila, lekin document ka sabse kareebi hissa yeh hai:\n\n"
+            "Is query ka exact keyword match nahi mila, lekin content ka sabse kareebi hissa yeh hai:\n\n"
             f"{preview}\n\n"
-            "*(Tip: Full conversational AI answers ke liye upar settings mein Gemini, OpenAI, ya Groq API key add kar sakte hain.)*"
+            "*(Tip: Full conversational AI summary & Q&A ke liye upar Groq, Gemini, ya OpenAI API key select kar sakte hain.)*"
         )
 
     query_terms = set(_tokenize(query))
@@ -163,26 +176,12 @@ def _build_extractive_answer(query: str, matches: list[dict[str, Any]]) -> str:
     return f"{body}\n\n*(Source: Local Extractive RAG — top {len(matches)} matching chunk(s) below)*"
 
 
-OPENAI_COMPAT_PROVIDERS = {
-    "openai": {
-        "url": "https://api.openai.com/v1/chat/completions",
-        "model": "gpt-4o-mini",
-        "env": "OPENAI_API_KEY",
-    },
-    "groq": {
-        "url": "https://api.groq.com/openai/v1/chat/completions",
-        "model": "llama-3.1-8b-instant",
-        "env": "GROQ_API_KEY",
-    },
-}
-
-
 async def _call_openai_compat(provider: str, api_key: str, prompt: str) -> str:
     cfg = OPENAI_COMPAT_PROVIDERS[provider]
     payload = {
         "model": cfg["model"],
         "messages": [
-            {"role": "system", "content": "Answer accurately using only the provided document context."},
+            {"role": "system", "content": "Answer accurately and concisely using only the provided content."},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.2,
@@ -217,7 +216,7 @@ def _resolve_provider(provider: str | None, api_key: str | None) -> tuple[str, s
     explicit_key = (api_key or "").strip() or None
 
     if selected in {"", "auto"}:
-        for name, env_name in (("gemini", "GEMINI_API_KEY"), ("openai", "OPENAI_API_KEY"), ("groq", "GROQ_API_KEY")):
+        for name, env_name in (("groq", "GROQ_API_KEY"), ("gemini", "GEMINI_API_KEY"), ("openai", "OPENAI_API_KEY")):
             env_val = os.getenv(env_name, "").strip()
             if env_val:
                 return name, env_val
@@ -229,9 +228,46 @@ def _resolve_provider(provider: str | None, api_key: str | None) -> tuple[str, s
     if explicit_key:
         return selected, explicit_key
 
-    env_map = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY"}
+    env_map = {"groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY"}
     env_val = os.getenv(env_map.get(selected, ""), "").strip() or None
     return (selected, env_val) if env_val else ("local", None)
+
+
+async def _call_llm(provider: str, api_key: str, prompt: str) -> str:
+    if provider == "gemini":
+        return await _call_gemini(api_key, prompt)
+    if provider in OPENAI_COMPAT_PROVIDERS:
+        return await _call_openai_compat(provider, api_key, prompt)
+    raise ValueError(f"Unsupported provider: {provider}")
+
+
+async def summarize_content(
+    title: str,
+    text: str,
+    provider: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, str]:
+    """Summarize a YouTube video's title and transcript in short."""
+    resolved_provider, resolved_key = _resolve_provider(provider, api_key)
+    if resolved_provider == "local" or not resolved_key:
+        return {"summary": summarize_short(title, text), "mode": "local"}
+
+    clipped = text[:12000]
+    prompt = (
+        f"YouTube Video Title: {title}\n\n"
+        "Explain this video in short (1-line overview + 3 to 5 crisp bullet points) "
+        "based ONLY on the title and content below:\n\n"
+        f"{clipped}"
+    )
+    try:
+        summary = await _call_llm(resolved_provider, resolved_key, prompt)
+        return {"summary": summary, "mode": resolved_provider}
+    except Exception as exc:
+        fallback = summarize_short(title, text)
+        return {
+            "summary": f"{fallback}\n\n*(LLM summary failed: {exc}; showed local short summary instead.)*",
+            "mode": f"local (fallback from {resolved_provider})",
+        }
 
 
 async def generate_answer(
@@ -239,6 +275,7 @@ async def generate_answer(
     matches: list[dict[str, Any]],
     provider: str | None = None,
     api_key: str | None = None,
+    source_title: str | None = None,
 ) -> dict[str, Any]:
     """Generate a RAG response using the selected LLM provider or local extractive fallback."""
     resolved_provider, resolved_key = _resolve_provider(provider, api_key)
@@ -249,24 +286,17 @@ async def generate_answer(
             "sources": matches,
         }
 
+    title_line = f"Source Title: {source_title}\n\n" if source_title else ""
     context_block = "\n\n".join(f"[Chunk {m['index'] + 1} | score={m['score']}]\n{m['text']}" for m in matches)
     prompt = (
-        "Answer the user question based ONLY on the context below. "
+        f"{title_line}"
+        "Answer the user question concisely based ONLY on the context below. "
         "If the context does not contain the answer, say so clearly.\n\n"
         f"Context:\n{context_block}\n\nQuestion: {query}"
     )
 
     try:
-        if resolved_provider == "gemini":
-            answer = await _call_gemini(resolved_key, prompt)
-        elif resolved_provider in OPENAI_COMPAT_PROVIDERS:
-            answer = await _call_openai_compat(resolved_provider, resolved_key, prompt)
-        else:
-            return {
-                "answer": _build_extractive_answer(query, matches),
-                "mode": "local",
-                "sources": matches,
-            }
+        answer = await _call_llm(resolved_provider, resolved_key, prompt)
         return {"answer": answer, "mode": resolved_provider, "sources": matches}
     except Exception as exc:
         fallback = _build_extractive_answer(query, matches)

@@ -3,3 +3,4 @@ uvicorn
 pypdf
 httpx
 python-dotenv
+youtube-transcript-api

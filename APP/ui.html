@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI RAG Chatbot</title>
+  <title>YT-RAG · YouTube Video Knowledge Assistant</title>
   <style>
     :root {
       --bg: #0b1020;
@@ -12,11 +12,12 @@
       --border: #28345e;
       --text: #e8ecf8;
       --muted: #9aa7cc;
-      --accent: #6c8cff;
-      --accent-hover: #839eff;
+      --accent: #ff4d4d;
+      --accent-2: #6c8cff;
       --user-bg: #2a3b7a;
       --bot-bg: #151e3b;
       --success: #34d399;
+      --warn: #fbbf24;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -47,19 +48,19 @@
       border: 1px solid rgba(52, 211, 153, 0.35);
     }
     .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    select, input[type="password"] {
+    select, input[type="password"], input[type="text"], textarea {
       background: var(--panel-2);
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 0.85rem;
+      padding: 8px 11px;
+      font-size: 0.88rem;
       outline: none;
     }
     .layout {
       flex: 1;
       display: grid;
-      grid-template-columns: 310px 1fr;
+      grid-template-columns: 330px 1fr;
       min-height: 0;
     }
     aside {
@@ -77,24 +78,35 @@
       border-radius: 12px;
       padding: 12px;
     }
-    .card h3 { font-size: 0.85rem; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
-    .stat-row { display: flex; justify-content: space-between; font-size: 0.86rem; padding: 3px 0; }
+    .card h3 { font-size: 0.8rem; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+    .thumb {
+      width: 100%;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+      display: none;
+    }
+    .video-title { font-weight: 600; font-size: 0.94rem; line-height: 1.35; margin-bottom: 6px; }
+    .stat-row { display: flex; justify-content: space-between; font-size: 0.84rem; padding: 3px 0; gap: 8px; }
+    .stat-row span:last-child { color: var(--muted); text-align: right; }
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
-      width: 100%;
-      padding: 8px 12px;
+      padding: 9px 14px;
       border-radius: 8px;
       border: 1px solid var(--border);
-      background: var(--accent);
+      background: var(--accent-2);
       color: #fff;
       font-weight: 600;
       font-size: 0.86rem;
       cursor: pointer;
     }
-    .btn:hover { background: var(--accent-hover); }
+    .btn-yt { background: var(--accent); border-color: #ff6b6b; }
+    .btn-yt:hover { background: #ff3838; }
+    .btn:hover { opacity: 0.94; }
+    .btn-full { width: 100%; }
     .btn-secondary { background: transparent; color: var(--text); margin-top: 6px; }
     .btn-secondary:hover { background: rgba(255,255,255,0.06); }
     .chunk-list { display: flex; flex-direction: column; gap: 8px; }
@@ -103,16 +115,26 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 8px 10px;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       line-height: 1.4;
       color: var(--muted);
     }
-    .chunk-item strong { color: var(--accent); display: block; margin-bottom: 4px; }
+    .chunk-item strong { color: var(--accent-2); display: block; margin-bottom: 4px; }
     main {
       display: flex;
       flex-direction: column;
       min-height: 0;
     }
+    .yt-bar {
+      padding: 12px 20px;
+      background: rgba(18, 25, 50, 0.75);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .yt-bar input { flex: 1; min-width: 240px; }
     .messages {
       flex: 1;
       overflow-y: auto;
@@ -122,7 +144,7 @@
       gap: 14px;
     }
     .msg {
-      max-width: 780px;
+      max-width: 800px;
       padding: 12px 16px;
       border-radius: 12px;
       line-height: 1.55;
@@ -131,6 +153,7 @@
     }
     .msg.user { align-self: flex-end; background: var(--user-bg); border: 1px solid #3c54a8; }
     .msg.bot { align-self: flex-start; background: var(--bot-bg); border: 1px solid var(--border); }
+    .msg.warn { border-color: rgba(251, 191, 36, 0.45); color: #fde68a; }
     .sources {
       margin-top: 10px;
       padding-top: 8px;
@@ -173,7 +196,7 @@
       font-size: 0.8rem;
       cursor: pointer;
     }
-    .chip:hover { border-color: var(--accent); }
+    .chip:hover { border-color: var(--accent-2); }
     form.composer {
       display: flex;
       gap: 10px;
@@ -183,34 +206,38 @@
     }
     form.composer input {
       flex: 1;
-      background: var(--panel-2);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 10px;
       padding: 11px 14px;
       font-size: 0.94rem;
-      outline: none;
     }
-    form.composer button { width: auto; padding: 0 20px; }
-    @media (max-width: 820px) {
+    dialog {
+      margin: auto;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      width: min(520px, 92vw);
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+    @media (max-width: 860px) {
       .layout { grid-template-columns: 1fr; }
-      aside { max-height: 240px; border-right: none; border-bottom: 1px solid var(--border); }
+      aside { max-height: 260px; border-right: none; border-bottom: 1px solid var(--border); }
     }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <span>AI RAG Chatbot</span>
+      <span>YT-RAG · YouTube Video Knowledge Assistant</span>
       <span class="badge" id="statusBadge">Ready</span>
     </div>
     <div class="controls">
       <select id="providerSelect" title="LLM Mode">
         <option value="auto">Auto (Env Key or Local RAG)</option>
-        <option value="local">Local Extractive RAG (No Key)</option>
+        <option value="local">Local Summary & RAG (No Key)</option>
+        <option value="groq">Groq API (Llama 3.1)</option>
         <option value="gemini">Google Gemini</option>
         <option value="openai">OpenAI</option>
-        <option value="groq">Groq</option>
       </select>
       <input type="password" id="apiKeyInput" placeholder="Optional API Key" style="display:none;" />
     </div>
@@ -219,63 +246,97 @@
   <div class="layout">
     <aside>
       <div class="card">
-        <h3>Knowledge Document</h3>
-        <div class="stat-row"><span>File</span><strong id="docName">Loading...</strong></div>
+        <h3>Loaded Knowledge Source</h3>
+        <img id="videoThumb" class="thumb" alt="Video thumbnail" />
+        <div class="video-title" id="docTitle">Loading sample...</div>
+        <div class="stat-row"><span>Type</span><span id="docType">-</span></div>
+        <div class="stat-row"><span>Author / Lang</span><span id="docMeta">-</span></div>
         <div class="stat-row"><span>Characters</span><span id="docChars">-</span></div>
         <div class="stat-row"><span>Chunks</span><span id="docChunks">-</span></div>
         <div style="margin-top: 10px;">
+          <button class="btn btn-secondary btn-full" id="pasteBtn" type="button">Paste Transcript / Text</button>
           <input type="file" id="pdfUpload" accept="application/pdf" style="display:none;" />
-          <button class="btn" id="uploadBtn" type="button">Upload Custom PDF</button>
-          <button class="btn btn-secondary" id="resetBtn" type="button" style="display:none;">Reset to Sample PDF</button>
+          <button class="btn btn-secondary btn-full" id="uploadBtn" type="button">Or Upload PDF</button>
         </div>
       </div>
 
       <div class="card" style="flex:1; min-height: 150px; overflow-y: auto;">
-        <h3>Extracted Chunks</h3>
+        <h3>Transcript / Document Chunks</h3>
         <div class="chunk-list" id="chunkList"></div>
       </div>
     </aside>
 
     <main>
+      <form class="yt-bar" id="ytForm">
+        <input type="text" id="ytUrlInput" placeholder="Paste YouTube video link (e.g. https://www.youtube.com/watch?v=...)" required />
+        <button class="btn btn-yt" type="submit" id="ytBtn">Get Title & Short Summary</button>
+      </form>
+
       <div class="messages" id="messages">
-        <div class="msg bot">Namaste! Main aapka AI RAG Chatbot hoon. Document load ho raha hai — aap is PDF ke baare mein koi bhi sawal pooch sakte hain ya apna khud ka PDF upload kar sakte hain.</div>
+        <div class="msg bot">Namaste! Upar kisi bhi YouTube video ka link paste karein — main video ka **Title**, **Transcript**, aur **Short Summary** nikal kar doonga, aur aap us video ke baare mein koi bhi sawal pooch sakte hain.</div>
       </div>
 
       <div class="prompts">
-        <button class="chip" type="button">What is Artificial Intelligence?</button>
-        <button class="chip" type="button">What does Unit 2 say about Machine Learning?</button>
-        <button class="chip" type="button">Summarize the key topics in this document</button>
+        <button class="chip" type="button">What is the main topic of this video?</button>
+        <button class="chip" type="button">Explain the key points in short</button>
+        <button class="chip" type="button">What conclusion or takeaway is shared?</button>
       </div>
 
       <form class="composer" id="chatForm">
-        <input type="text" id="questionInput" placeholder="PDF se kuch bhi poochein..." autocomplete="off" required />
-        <button class="btn" type="submit" id="sendBtn">Send</button>
+        <input type="text" id="questionInput" placeholder="Video ya document ke baare mein kuch bhi poochein..." autocomplete="off" required />
+        <button class="btn" type="submit">Send</button>
       </form>
     </main>
   </div>
 
-  <script>
-    let customChunks = null;
+  <dialog id="pasteDialog">
+    <h3 style="margin-bottom: 10px;">Paste Video Transcript / Notes</h3>
+    <input type="text" id="pasteTitle" placeholder="Video or Note Title" style="width:100%; margin-bottom:10px;" />
+    <textarea id="pasteBody" rows="7" placeholder="Paste transcript text here..." style="width:100%; margin-bottom:10px;"></textarea>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button class="btn btn-secondary" type="button" id="cancelPaste">Cancel</button>
+      <button class="btn" type="button" id="submitPaste">Summarize & Load</button>
+    </div>
+  </dialog>
 
-    const docNameEl = document.getElementById("docName");
+  <script>
+    let activeChunks = null;
+    let activeTitle = null;
+
+    const docTitleEl = document.getElementById("docTitle");
+    const docTypeEl = document.getElementById("docType");
+    const docMetaEl = document.getElementById("docMeta");
     const docCharsEl = document.getElementById("docChars");
     const docChunksEl = document.getElementById("docChunks");
+    const videoThumbEl = document.getElementById("videoThumb");
     const chunkListEl = document.getElementById("chunkList");
     const messagesEl = document.getElementById("messages");
     const providerSelect = document.getElementById("providerSelect");
     const apiKeyInput = document.getElementById("apiKeyInput");
-    const resetBtn = document.getElementById("resetBtn");
     const statusBadge = document.getElementById("statusBadge");
+    const pasteDialog = document.getElementById("pasteDialog");
 
     providerSelect.addEventListener("change", () => {
-      const showKey = ["gemini", "openai", "groq"].includes(providerSelect.value);
+      const showKey = ["groq", "gemini", "openai"].includes(providerSelect.value);
       apiKeyInput.style.display = showKey ? "inline-block" : "none";
     });
 
-    function renderDocInfo(info) {
-      docNameEl.textContent = info.filename;
+    function renderSourceInfo(info) {
+      activeChunks = info.chunks;
+      activeTitle = info.title || info.filename;
+      docTitleEl.textContent = activeTitle;
+      docTypeEl.textContent = (info.source_type || "document").toUpperCase();
+      docMetaEl.textContent = info.author ? `${info.author} (${info.language || ""})` : (info.language || "Local");
       docCharsEl.textContent = info.total_characters;
       docChunksEl.textContent = info.total_chunks;
+
+      if (info.thumbnail_url) {
+        videoThumbEl.src = info.thumbnail_url;
+        videoThumbEl.style.display = "block";
+      } else {
+        videoThumbEl.style.display = "none";
+      }
+
       chunkListEl.innerHTML = "";
       info.chunks.forEach((text, i) => {
         const div = document.createElement("div");
@@ -289,14 +350,12 @@
     async function loadDefaultDoc() {
       const res = await fetch("/api/chunks");
       const data = await res.json();
-      customChunks = null;
-      resetBtn.style.display = "none";
-      renderDocInfo(data);
+      renderSourceInfo(data);
     }
 
-    function appendMessage(role, text, sources = [], mode = "") {
+    function appendMessage(role, text, sources = [], mode = "", extraClass = "") {
       const div = document.createElement("div");
-      div.className = `msg ${role}`;
+      div.className = `msg ${role} ${extraClass}`.trim();
       div.textContent = text;
 
       if (sources.length) {
@@ -328,9 +387,47 @@
       return div;
     }
 
+    document.getElementById("ytForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const url = document.getElementById("ytUrlInput").value.trim();
+      if (!url) return;
+
+      appendMessage("user", `Analyze YouTube Video: ${url}`);
+      const pending = appendMessage("bot", "YouTube video ka title aur transcript fetch kar raha hoon...");
+      statusBadge.textContent = "Fetching YouTube...";
+
+      try {
+        const res = await fetch("/api/youtube", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url,
+            provider: providerSelect.value,
+            api_key: apiKeyInput.value.trim() || null,
+          }),
+        });
+        const data = await res.json();
+        pending.remove();
+        if (!res.ok) {
+          appendMessage("bot", `Error: ${data.detail || "YouTube fetch failed"}`, [], "", "warn");
+          return;
+        }
+        renderSourceInfo(data);
+        if (data.warning) {
+          appendMessage("bot", `Note: ${data.warning}`, [], "", "warn");
+        }
+        appendMessage("bot", `${data.summary}\n\n(Mode: ${data.mode} · ${data.total_chunks} chunks ready for Q&A)`);
+      } catch (err) {
+        pending.remove();
+        appendMessage("bot", `Network error: ${err.message}`, [], "", "warn");
+      } finally {
+        statusBadge.textContent = "Ready";
+      }
+    });
+
     async function askQuestion(question) {
       appendMessage("user", question);
-      const pending = appendMessage("bot", "Soch raha hoon...");
+      const pending = appendMessage("bot", "Answer dhoondh raha hoon...");
       statusBadge.textContent = "Thinking...";
 
       try {
@@ -341,7 +438,8 @@
             question,
             provider: providerSelect.value,
             api_key: apiKeyInput.value.trim() || null,
-            chunks: customChunks,
+            chunks: activeChunks,
+            source_title: activeTitle,
           }),
         });
         const data = await res.json();
@@ -370,6 +468,34 @@
 
     document.querySelectorAll(".chip").forEach((btn) => {
       btn.addEventListener("click", () => askQuestion(btn.textContent));
+    });
+
+    document.getElementById("pasteBtn").addEventListener("click", () => pasteDialog.showModal());
+    document.getElementById("cancelPaste").addEventListener("click", () => pasteDialog.close());
+    document.getElementById("submitPaste").addEventListener("click", async () => {
+      const title = document.getElementById("pasteTitle").value.trim() || "Custom Transcript";
+      const text = document.getElementById("pasteBody").value.trim();
+      if (!text) return;
+      pasteDialog.close();
+      statusBadge.textContent = "Summarizing...";
+      const res = await fetch("/api/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          text,
+          provider: providerSelect.value,
+          api_key: apiKeyInput.value.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      statusBadge.textContent = "Ready";
+      if (!res.ok) {
+        alert(data.detail || "Failed");
+        return;
+      }
+      renderSourceInfo(data);
+      appendMessage("bot", `${data.summary}\n\n(Mode: ${data.mode} · ${data.total_chunks} chunks ready)`);
     });
 
     document.getElementById("uploadBtn").addEventListener("click", () => {
@@ -401,13 +527,10 @@
         alert(data.detail || "Upload failed");
         return;
       }
-      customChunks = data.chunks;
-      resetBtn.style.display = "inline-flex";
-      renderDocInfo(data);
-      appendMessage("bot", `"${data.filename}" upload aur split ho gaya (${data.total_chunks} chunks). Ab aap is naye PDF se sawal pooch sakte hain!`);
+      renderSourceInfo(data);
+      appendMessage("bot", `"${data.filename}" upload ho gaya (${data.total_chunks} chunks). Ab sawal poochein!`);
     });
 
-    resetBtn.addEventListener("click", loadDefaultDoc);
     loadDefaultDoc();
   </script>
 </body>
